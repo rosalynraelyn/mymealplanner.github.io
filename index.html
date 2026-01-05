@@ -14,6 +14,9 @@
             --accent-soft: #F1F1EF;
             --cheat-bg: #F7F1E3;
             --edit-blue: #0B6E99;
+            --green: #2D8A5B;
+            --warn: #D9730D;
+            --danger: #d15d5d;
         }
 
         body {
@@ -27,11 +30,16 @@
 
         .status-bar {
             position: sticky; top: 10px; background: var(--card-bg); border: 1px solid var(--border-color);
-            padding: 12px 16px; border-radius: 8px; display: flex; justify-content: space-between;
-            align-items: center; z-index: 100; margin-bottom: 24px; box-shadow: 0 2px 5px rgba(0,0,0,0.03);
+            padding: 16px; border-radius: 8px; z-index: 100; margin-bottom: 24px; box-shadow: 0 2px 5px rgba(0,0,0,0.03);
         }
 
+        .status-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
         .remaining-val { font-weight: 700; font-size: 20px; }
+        
+        /* Progress Bar */
+        .progress-container { height: 8px; width: 100%; background: var(--accent-soft); border-radius: 4px; overflow: hidden; }
+        .progress-fill { height: 100%; width: 0%; background: var(--green); transition: width 0.4s ease, background-color 0.4s ease; }
+
         .section { margin-bottom: 30px; }
         .section-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; border-bottom: 1px solid var(--border-color); }
         .section-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.8px; color: var(--text-secondary); font-weight: 700; }
@@ -51,11 +59,12 @@
 
         .action-link { font-size: 11px; cursor: pointer; margin-top: 15px; display: inline-block; margin-right: 15px; text-decoration: underline; opacity: 0.7; }
         .action-link:hover { opacity: 1; }
-        .delete-link { color: #d15d5d; }
+        .delete-link { color: var(--danger); }
         .edit-link { color: var(--edit-blue); }
 
         .disabled { opacity: 0.2; pointer-events: none; }
-        .btn-primary { width: 100%; padding: 12px; border-radius: 8px; border: none; background: var(--text-main); color: white; font-weight: 600; cursor: pointer; margin-top: 10px; }
+        .btn-primary { width: 100%; padding: 14px; border-radius: 8px; border: none; background: var(--text-main); color: white; font-weight: 600; cursor: pointer; margin-top: 10px; }
+        .btn-save-progress { width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--green); background: white; color: var(--green); font-weight: 600; cursor: pointer; margin-top: 10px; }
         .btn-secondary { background: none; border: 1px solid var(--border-color); color: var(--text-secondary); margin-top: 10px; padding: 8px; width: 100%; border-radius: 6px; cursor: pointer; font-size: 12px; }
         
         .history-section { margin-top: 50px; border-top: 1px solid var(--border-color); padding-top: 20px; }
@@ -72,14 +81,20 @@
     <header><h1>Daily Menu</h1></header>
 
     <div class="status-bar">
-        <span>Budget Left</span>
-        <span class="remaining-val" id="budget">1400</span>
+        <div class="status-header">
+            <span>Budget Left</span>
+            <span class="remaining-val" id="budget">1400</span>
+        </div>
+        <div class="progress-container">
+            <div id="progress-fill" class="progress-fill"></div>
+        </div>
     </div>
 
     <div id="menu-container"></div>
 
-    <button class="btn-primary" onclick="saveDay()">Save Day to Log</button>
-    <button class="btn-secondary" onclick="location.reload()">Clear Selections</button>
+    <button class="btn-save-progress" onclick="manualSaveProgress()">Save Progress</button>
+    <button class="btn-primary" onclick="confirmSaveDay()">End Day & Finalize Log</button>
+    <button class="btn-secondary" onclick="resetBoard()">Clear All Selections</button>
 
     <div class="history-section">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
@@ -134,24 +149,42 @@ const defaultMenu = {
 };
 
 let userMenu = JSON.parse(localStorage.getItem('userMenu')) || defaultMenu;
+let currentDraft = JSON.parse(localStorage.getItem('currentDraft')) || {};
+let draftDate = localStorage.getItem('draftDate') || new Date().toLocaleDateString();
+
+function checkAutoArchive() {
+    const today = new Date().toLocaleDateString();
+    if (draftDate !== today) {
+        let hasChecked = false;
+        for (let id in currentDraft) if (currentDraft[id].checked) hasChecked = true;
+        if (hasChecked) saveDay(draftDate);
+        currentDraft = {};
+        draftDate = today;
+        localStorage.setItem('draftDate', today);
+        localStorage.setItem('currentDraft', JSON.stringify(currentDraft));
+    }
+}
 
 function renderMenu() {
+    checkAutoArchive();
     const container = document.getElementById('menu-container');
     container.innerHTML = '';
     for (const [section, items] of Object.entries(userMenu)) {
         let html = `<div class="section"><div class="section-header"><span class="section-title">${section}</span><button class="add-btn" onclick="addNewMeal('${section}')">+</button></div>`;
         items.forEach((item) => {
+            const isChecked = currentDraft[item.id]?.checked ? 'checked' : '';
+            const displayCal = currentDraft[item.id]?.override || item.base;
             html += `<div class="meal-card ${item.isCheat ? 'cheat' : ''}" id="card-${item.id}">
                 <div class="meal-header">
-                    <input type="checkbox" id="check-${item.id}" onchange="update()">
+                    <input type="checkbox" id="check-${item.id}" onchange="updateDraft(${item.id})" ${isChecked}>
                     <div class="meal-info" onclick="toggleDetails('${item.id}')">
                         <span class="meal-name">${item.name}</span>
-                        <span class="cal-display" id="cal-val-${item.id}">${item.base}</span>
+                        <span class="cal-display" id="cal-val-${item.id}">${displayCal}</span>
                     </div>
                 </div>
                 <div class="details" id="details-${item.id}">
                     <strong>Ingredients:</strong><br>${item.ingredients || 'No measurements.'}
-                    <div class="override-box">Override Today: <input type="number" class="override-input" id="over-${item.id}" value="${item.base}" oninput="manualAdjust('${item.id}')"></div>
+                    <div class="override-box">Override Today: <input type="number" class="override-input" id="over-${item.id}" value="${displayCal}" oninput="updateDraft(${item.id})"></div>
                     <span class="action-link edit-link" onclick="editMeal('${section}', ${item.id})">Edit Definition</span>
                     <span class="action-link delete-link" onclick="deleteMeal('${section}', ${item.id})">Remove</span>
                 </div>
@@ -159,63 +192,101 @@ function renderMenu() {
         });
         container.innerHTML += html + `</div>`;
     }
-    update();
+    updateUI();
+}
+
+function updateDraft(id) {
+    const isChecked = document.getElementById(`check-${id}`).checked;
+    const overrideVal = parseInt(document.getElementById(`over-${id}`).value) || 0;
+    currentDraft[id] = { checked: isChecked, override: overrideVal };
+    document.getElementById(`cal-val-${id}`).innerText = overrideVal;
+    localStorage.setItem('currentDraft', JSON.stringify(currentDraft));
+    updateUI();
+}
+
+function updateUI() {
+    let total = 0;
+    const checks = document.querySelectorAll('input[type="checkbox"]:not(.history-item input)');
+    checks.forEach(c => { 
+        if (c.checked) { 
+            const id = c.id.replace('check-', '');
+            total += parseInt(document.getElementById(`cal-val-${id}`).innerText); 
+        } 
+    });
+
+    const limit = 1400;
+    let rem = limit - total;
+    const percentage = Math.min((total / limit) * 100, 100);
+    const fill = document.getElementById('progress-fill');
+    
+    fill.style.width = percentage + '%';
+    if (percentage > 100) fill.style.backgroundColor = 'var(--danger)';
+    else if (percentage > 85) fill.style.backgroundColor = 'var(--warn)';
+    else fill.style.backgroundColor = 'var(--green)';
+
+    document.getElementById('budget').innerText = rem;
+    document.getElementById('budget').style.color = rem < 0 ? "var(--danger)" : "var(--text-main)";
+    
+    checks.forEach(c => {
+        if (!c.checked) {
+            const id = c.id.replace('check-', '');
+            const v = parseInt(document.getElementById(`cal-val-${id}`).innerText) || 0;
+            if (total + v > limit) { 
+                c.disabled = true; document.getElementById(`card-${id}`).classList.add('disabled'); 
+            } else { 
+                c.disabled = false; document.getElementById(`card-${id}`).classList.remove('disabled'); 
+            }
+        }
+    });
+}
+
+function manualSaveProgress() { alert("Progress Saved!"); }
+function confirmSaveDay() { if(confirm("Log today to history and clear board?")) saveDay(new Date().toLocaleDateString()); }
+function resetBoard() { if(confirm("Clear current selections?")) { currentDraft = {}; localStorage.removeItem('currentDraft'); renderMenu(); } }
+
+function saveDay(dateString) {
+    const meals = []; let total = 0;
+    for (let id in currentDraft) {
+        if (currentDraft[id].checked) {
+            const item = userMenuFind(id);
+            const cal = currentDraft[id].override;
+            meals.push(`${item ? item.name : 'Custom'} (${cal})`); 
+            total += cal;
+        }
+    }
+    if(total === 0) return;
+    const history = JSON.parse(localStorage.getItem('mealHistory') || '[]');
+    history.unshift({ id: Date.now(), date: dateString, total, meals: meals.join(', ') });
+    localStorage.setItem('mealHistory', JSON.stringify(history));
+    currentDraft = {};
+    localStorage.removeItem('currentDraft');
+    renderMenu();
+    loadHistory();
+}
+
+function userMenuFind(id) {
+    for (let cat in userMenu) {
+        let found = userMenu[cat].find(i => i.id == id);
+        if (found) return found;
+    }
 }
 
 function addNewMeal(section) {
     const name = prompt("Meal Name:"); if (!name) return;
-    const base = parseInt(prompt("Calories:", "300"));
-    const ing = prompt("Ingredients:");
-    userMenu[section].push({ id: Date.now(), name, base, ingredients: ing, isCheat: section === "Weekly Specials" });
+    userMenu[section].push({ id: Date.now(), name, base: parseInt(prompt("Calories:", "300")), ingredients: prompt("Ingredients:"), isCheat: section === "Weekly Specials" });
     saveMenu();
 }
 
 function editMeal(section, id) {
     const item = userMenu[section].find(i => i.id === id);
-    const newName = prompt("Edit Name:", item.name);
-    const newBase = prompt("Edit Base Calories:", item.base);
-    const newIng = prompt("Edit Ingredients:", item.ingredients);
-    if (newName) item.name = newName;
-    if (newBase) item.base = parseInt(newBase);
-    if (newIng) item.ingredients = newIng;
+    const n = prompt("Edit Name:", item.name); const c = prompt("Edit Calories:", item.base); const g = prompt("Edit Ingredients:", item.ingredients);
+    if (n) item.name = n; if (c) item.base = parseInt(c); if (g) item.ingredients = g;
     saveMenu();
 }
 
 function deleteMeal(section, id) { if(confirm("Remove permanently?")) { userMenu[section] = userMenu[section].filter(i => i.id !== id); saveMenu(); } }
 function saveMenu() { localStorage.setItem('userMenu', JSON.stringify(userMenu)); renderMenu(); }
 function toggleDetails(id) { document.getElementById(`details-${id}`).classList.toggle('open'); }
-function manualAdjust(id) { document.getElementById(`cal-val-${id}`).innerText = document.getElementById(`over-${id}`).value || 0; update(); }
-
-function update() {
-    let total = 0;
-    const checks = document.querySelectorAll('input[type="checkbox"]:not(.history-item input)');
-    checks.forEach(c => { if (c.checked) { total += parseInt(document.getElementById(`cal-val-${c.id.replace('check-', '')}`).innerText); } });
-    let rem = 1400 - total;
-    document.getElementById('budget').innerText = rem;
-    document.getElementById('budget').style.color = rem < 0 ? "#D15D5D" : "#37352F";
-    checks.forEach(c => {
-        if (!c.checked) {
-            const v = parseInt(document.getElementById(`cal-val-${c.id.replace('check-', '')}`).innerText);
-            if (total + v > 1400) { c.disabled = true; document.getElementById(`card-${c.id.replace('check-', '')}`).classList.add('disabled'); }
-            else { c.disabled = false; document.getElementById(`card-${c.id.replace('check-', '')}`).classList.remove('disabled'); }
-        }
-    });
-}
-
-function saveDay() {
-    const meals = []; let total = 0;
-    document.querySelectorAll('input:checked').forEach(c => {
-        const id = c.id.replace('check-', '');
-        const name = document.querySelector(`#card-${id} .meal-name`).innerText;
-        const cal = document.getElementById(`cal-val-${id}`).innerText;
-        meals.push(`${name} (${cal})`); total += parseInt(cal);
-    });
-    if(total === 0) return;
-    const history = JSON.parse(localStorage.getItem('mealHistory') || '[]');
-    history.unshift({ id: Date.now(), date: new Date().toLocaleDateString(), total, meals: meals.join(', ') });
-    localStorage.setItem('mealHistory', JSON.stringify(history));
-    loadHistory(); alert("Logged!");
-}
 
 function loadHistory() {
     const history = JSON.parse(localStorage.getItem('mealHistory') || '[]');
